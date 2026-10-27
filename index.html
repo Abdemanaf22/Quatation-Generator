@@ -68,6 +68,7 @@ input.price{width:75px;}
 <select id="dbSel" onchange="setDb(this.value)" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:7px;font-size:14px;">
 <option value="default">Default (Quotation sheet)</option>
 <option value="pricelist">Price List database</option>
+<option value="supabase">Latest Supabase</option>
 </select>
 </div>
 
@@ -148,12 +149,37 @@ document.getElementById('hdrLogo').src = 'data:image/png;base64,' + LOGO_B64;
 
 /* ====== DATABASE SWITCH ====== */
 const PRICELIST_URL = 'https://script.google.com/macros/s/AKfycbyw2R6B8_TPnLR-VsIdSyK5jHvaGtMky244EzK5zgoNfD7JYObJb2uFFCwhD6eB5G1pMQ/exec';
-let dbMode='default', plCache=null;
+const SB_URL='https://flydynjhbmfykonstvyu.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZseWR5bmpoYm1meWtvbnN0dnl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE5Njc4NzIsImV4cCI6MjEwNzU0Mzg3Mn0.xcJRbXqLyc5B_femOpSTSteAM4FjYZJ33dFmUkf4AFk';
+const SB_TABLE='products';
+let dbMode='default', plCache=null, sbCache=null;
 try{ dbMode=localStorage.getItem('procut_db')||'default'; }catch(e){}
 document.getElementById('dbSel').value=dbMode;
-function setDb(v){ dbMode=v; try{localStorage.setItem('procut_db',v);}catch(e){} toast('Using '+(v==='pricelist'?'Price List':'Default')+' database'); }
+function setDb(v){ dbMode=v; try{localStorage.setItem('procut_db',v);}catch(e){} toast('Using '+(v==='pricelist'?'Price List':v==='supabase'?'Latest Supabase':'Default')+' database'); }
 function fixImg(u){ const m=(u||'').match(/(?:\/d\/|[?&]id=)([a-zA-Z0-9_-]{15,})/); return m?'https://lh3.googleusercontent.com/d/'+m[1]+'=w300':(u||''); }
+async function loadSupabase(){
+  if(sbCache) return sbCache;
+  let all=[], from=0, step=1000;
+  while(true){
+    const r=await fetch(SB_URL+'/rest/v1/'+SB_TABLE+'?select=sku,parent_sku,name,variant_name,category,image,price&order=sort.asc&offset='+from+'&limit='+step,{headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY}});
+    if(!r.ok) throw new Error('Supabase '+r.status+' '+(await r.text()).slice(0,120));
+    const rows=await r.json(); all=all.concat(rows);
+    if(rows.length<step) break; from+=step;
+  }
+  sbCache=all; return all;
+}
 async function fetchQuoteData(codes){
+  if(dbMode==='supabase'){
+    const rows=await loadSupabase();
+    const U=x=>String(x||'').trim().toUpperCase();
+    const mk=x=>{ const pr=(x.price===null||x.price===undefined||x.price==='')?'':'Rs '+Number(x.price).toLocaleString('en-IN');
+      return {name:[x.name,x.variant_name].filter(Boolean).join(' - '), img:fixImg(x.image), prices:{w:pr,s:pr,r:pr,e:pr}, hsn:'', gst:'', sheet:x.category||''}; };
+    return {products:codes.map(code=>{
+      const u=U(code); let m=rows.filter(x=>U(x.sku)===u);
+      if(!m.length) m=rows.filter(x=>U(x.parent_sku)===u);
+      return {code,variants:m.map(mk)};
+    })};
+  }
   if(dbMode!=='pricelist'){
     const res=await fetch(APPS_SCRIPT_URL+'?action=getQuoteData'+(SHEET_NAMES?('&sheets='+encodeURIComponent(SHEET_NAMES)):'')+'&codes='+encodeURIComponent(codes.join(',')));
     const d=await res.json(); if(d.error) throw new Error(d.error); return d;
